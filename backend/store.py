@@ -274,6 +274,12 @@ class M2WalletStore:
                     ("min_callback_usdt", os.environ.get("M2_MIN_CALLBACK_USDT", "0"), "environment", now),
                     ("min_callback_usdc", os.environ.get("M2_MIN_CALLBACK_USDC", "0"), "environment", now),
                     ("withdrawal_verification_enabled", os.environ.get("M2_WITHDRAWAL_VERIFICATION_ENABLED", "false").lower(), "environment", now),
+                    ("tron_fee_available", os.environ.get("M2_TRON_FEE_AVAILABLE", "250"), "environment", now),
+                    ("tron_fee_minimum", os.environ.get("M2_TRON_FEE_MINIMUM", "50"), "environment", now),
+                    ("tron_fee_per_transaction", os.environ.get("M2_TRON_FEE_PER_TRANSACTION", "15"), "environment", now),
+                    ("polygon_fee_available", os.environ.get("M2_POLYGON_FEE_AVAILABLE", "8"), "environment", now),
+                    ("polygon_fee_minimum", os.environ.get("M2_POLYGON_FEE_MINIMUM", "1"), "environment", now),
+                    ("polygon_fee_per_transaction", os.environ.get("M2_POLYGON_FEE_PER_TRANSACTION", "0.02"), "environment", now),
                 ],
             )
             environment_key = os.environ.get("M2_WALLET_API_KEY") or secrets.token_urlsafe(32)
@@ -968,6 +974,8 @@ class M2WalletStore:
         )
         list_types = {item["list_type"] for item in address_book}
         risk = self.risk_policy()
+        network_reserves = self.network_reserves()
+        healthy_networks = {item["network"] for item in network_reserves if item["healthy"]}
         checks = [
             {"id": "stablecoin_payments", "label": "USDT and USDC payment flows", "passed": {"USDT", "USDC"}.issubset(confirmed_assets), "evidence": ", ".join(sorted(confirmed_assets)) or "No confirmed assets"},
             {"id": "payment_exceptions", "label": "Underpaid, overpaid, and expired states", "passed": {"PARTIAL", "OVERPAID", "EXPIRED"}.issubset(exception_states), "evidence": ", ".join(sorted({"PARTIAL", "OVERPAID", "EXPIRED"}.intersection(exception_states))) or "No exception scenarios"},
@@ -976,6 +984,7 @@ class M2WalletStore:
             {"id": "external_validation", "label": "Merchant pre-payout validation", "passed": validation_passed, "evidence": "Approved validation recorded" if validation_passed else "No approved validation"},
             {"id": "signed_callbacks", "label": "Signed callbacks and merchant receipts", "passed": any(item["status"] == "DELIVERED" for item in callbacks) and bool(receipts), "evidence": f"{len(receipts)} verified request(s)"},
             {"id": "risk_controls", "label": "Limits, allowlist, and blocklist", "passed": {"ALLOWLIST", "BLOCKLIST"}.issubset(list_types) and Decimal(risk["daily_withdrawal_limit"]) > 0, "evidence": f"Daily {risk['daily_withdrawn_amount']} / {risk['daily_withdrawal_limit']}"},
+            {"id": "network_fee_reserves", "label": "TRON and Polygon network fee reserves", "passed": {"TRON", "POLYGON"}.issubset(healthy_networks), "evidence": ", ".join(f"{item['network']} {item['available']} {item['native_asset']} ({item['projected_transactions']} tx)" for item in network_reserves)},
             {"id": "reconciliation", "label": "Balanced ledger and operational reconciliation", "passed": bool(reconciliation["ok"]), "evidence": "Balanced" if reconciliation["ok"] else "Reconciliation exceptions found"},
         ]
         passed = sum(1 for item in checks if item["passed"])
@@ -1140,6 +1149,83 @@ class M2WalletStore:
                 [(key, value, actor, now) for key, value in updates],
             )
         return self.risk_policy()
+
+    def network_reserves(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = {
+                row["key"]: row
+                for row in db.execute(
+                    "SELECT key,value,updated_by,updated_at FROM runtime_settings WHERE key LIKE '%_fee_%'"
+                )
+            }
+        result = []
+        for network, native_asset, label in (
+            ("TRON", "TRX", "TRON energy and bandwidth reserve"),
+            ("POLYGON", "POL", "Polygon gas reserve"),
+        ):
+            prefix = network.lower()
+            available = Decimal(rows[f"{prefix}_fee_available"]["value"])
+            minimum = Decimal(rows[f"{prefix}_fee_minimum"]["value"])
+            per_transaction = Decimal(rows[f"{prefix}_fee_per_transaction"]["value"])
+            spendable = max(available - minimum, Decimal("0"))
+            projected = int(spendable / per_transaction) if per_transaction > 0 else 0
+            updated = max(
+                (
+                    rows[f"{prefix}_fee_available"],
+                    rows[f"{prefix}_fee_minimum"],
+                    rows[f"{prefix}_fee_per_transaction"],
+                ),
+                key=lambda row: row["updated_at"],
+            )
+            result.append(
+                {
+                    "network": network,
+                    "native_asset": native_asset,
+                    "label": label,
+                    "available": money(available.quantize(MONEY_QUANTUM)),
+                    "minimum_required": money(minimum.quantize(MONEY_QUANTUM)),
+                    "estimated_per_transaction": money(per_transaction.quantize(MONEY_QUANTUM)),
+                    "projected_transactions": projected,
+                    "healthy": projected >= 1,
+                    "updated_by": updated["updated_by"],
+                    "updated_at": updated["updated_at"],
+                }
+            )
+        return result
+
+    def update_network_reserve(self, payload: dict[str, Any], actor: str) -> dict[str, Any]:
+        network = str(payload.get("network", "")).upper()
+        if network not in {"TRON", "POLYGON"}:
+            raise ValueError("network must be TRON or POLYGON")
+        allowed = {"network", "available", "minimum_required", "estimated_per_transaction"}
+        if not set(payload).issubset(allowed) or not any(field in payload for field in allowed - {"network"}):
+            raise ValueError("network reserve contains unsupported or missing fields")
+        prefix = network.lower()
+        field_map = {
+            "available": f"{prefix}_fee_available",
+            "minimum_required": f"{prefix}_fee_minimum",
+            "estimated_per_transaction": f"{prefix}_fee_per_transaction",
+        }
+        updates = []
+        for field, key in field_map.items():
+            if field in payload:
+                try:
+                    value = Decimal(str(payload[field])).quantize(MONEY_QUANTUM, rounding=ROUND_DOWN)
+                except (InvalidOperation, TypeError, ValueError) as exc:
+                    raise ValueError(f"{field} must be a decimal string") from exc
+                if field == "available" and value < 0:
+                    raise ValueError("available must be zero or greater")
+                if field in {"minimum_required", "estimated_per_transaction"} and value <= 0:
+                    raise ValueError(f"{field} must be greater than zero")
+                updates.append((key, money(value)))
+        now = utc_now()
+        with self._lock, self.connect() as db:
+            db.executemany(
+                """INSERT INTO runtime_settings(key,value,updated_by,updated_at) VALUES(?,?,?,?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_by=excluded.updated_by,updated_at=excluded.updated_at""",
+                [(key, value, actor, now) for key, value in updates],
+            )
+        return next(item for item in self.network_reserves() if item["network"] == network)
 
     def collection_policy(self) -> dict[str, Any]:
         with self.connect() as db:

@@ -82,6 +82,7 @@ X-API-Key: <your-environment-api-key>
 - `POST /api/v1/session`、`POST /api/v1/session/logout`
 - `GET /api/v1/audit-logs`
 - `GET|POST /api/v1/risk-policy`
+- `GET|POST /api/v1/network-reserves`
 - `GET|POST /api/v1/collection-policy`
 - `GET /api/v1/collection-candidates`
 - `GET /api/v1/collections`、`POST /api/v1/collections/run`

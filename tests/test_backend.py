@@ -176,11 +176,28 @@ class StoreTests(unittest.TestCase):
 
     def test_demo_readiness_uses_live_operational_evidence(self) -> None:
         readiness = self.store.demo_readiness()
-        self.assertEqual(readiness["total"], 8)
+        self.assertEqual(readiness["total"], 9)
         self.assertFalse(readiness["ready"])
-        self.assertEqual(len(readiness["checks"]), 8)
+        self.assertEqual(len(readiness["checks"]), 9)
         self.assertTrue(next(item for item in readiness["checks"] if item["id"] == "reconciliation")["passed"])
+        self.assertTrue(next(item for item in readiness["checks"] if item["id"] == "network_fee_reserves")["passed"])
         self.assertFalse(next(item for item in readiness["checks"] if item["id"] == "stablecoin_payments")["passed"])
+
+    def test_network_fee_reserve_tracks_safe_transaction_capacity(self) -> None:
+        reserves = {item["network"]: item for item in self.store.network_reserves()}
+        self.assertTrue(reserves["TRON"]["healthy"])
+        self.assertEqual(reserves["TRON"]["projected_transactions"], 13)
+        updated = self.store.update_network_reserve(
+            {"network": "TRON", "available": "60", "minimum_required": "50", "estimated_per_transaction": "15"},
+            "admin",
+        )
+        self.assertFalse(updated["healthy"])
+        self.assertEqual(updated["projected_transactions"], 0)
+        self.assertEqual(updated["updated_by"], "admin")
+        zero = self.store.update_network_reserve({"network": "TRON", "available": "0"}, "admin")
+        self.assertEqual(zero["available"], "0.000000")
+        with self.assertRaisesRegex(ValueError, "greater than zero"):
+            self.store.update_network_reserve({"network": "TRON", "estimated_per_transaction": "0"}, "admin")
 
     def test_collection_groups_confirmed_addresses_and_books_internal_transfer(self) -> None:
         for order_id, value in (("COLLECT-1", "60"), ("COLLECT-2", "50")):
@@ -376,8 +393,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(collection["data"]["status"], "CONFIRMED")
         status, readiness = self.request("/api/v1/demo-readiness")
         self.assertEqual(status, 200)
-        self.assertEqual(readiness["data"]["total"], 8)
-        self.assertEqual(len(readiness["data"]["checks"]), 8)
+        self.assertEqual(readiness["data"]["total"], 9)
+        self.assertEqual(len(readiness["data"]["checks"]), 9)
 
     def test_local_merchant_sandbox_receives_signed_callback(self) -> None:
         callback_url = f"{self.base_url}/api/v1/demo-merchant/webhook"
@@ -543,6 +560,18 @@ class ApiTests(unittest.TestCase):
         status, logs = self.request("/api/v1/audit-logs", authorized=False, cookie=finance_cookie)
         self.assertEqual(status, 200)
         self.assertTrue(any(item["actor"] == "finance" and item["action"] == "APPROVE" for item in logs["data"]))
+        status, reserves = self.request("/api/v1/network-reserves", authorized=False, cookie=finance_cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual({item["network"] for item in reserves["data"]}, {"TRON", "POLYGON"})
+        with self.assertRaises(HTTPError) as reserve_forbidden:
+            self.request(
+                "/api/v1/network-reserves",
+                "POST",
+                {"network": "TRON", "available": "90"},
+                authorized=False,
+                cookie=finance_cookie,
+            )
+        self.assertEqual(reserve_forbidden.exception.code, 403)
 
         status, policy = self.request(
             "/api/v1/risk-policy",
@@ -555,6 +584,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(policy["data"]["daily_withdrawal_limit"], "40000.000000")
         self.assertFalse(policy["data"]["allowlist_enforced"])
         self.request("/api/v1/risk-policy", "POST", {"payouts_enabled": True, "max_withdrawal_amount": "10000"})
+        status, reserve = self.request(
+            "/api/v1/network-reserves",
+            "POST",
+            {"network": "TRON", "available": "125", "minimum_required": "50", "estimated_per_transaction": "15"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(reserve["data"]["projected_transactions"], 5)
+        self.assertTrue(reserve["data"]["healthy"])
 
     def test_admin_manages_scoped_api_key_and_scope_is_enforced(self) -> None:
         _, admin_cookie = self.login("admin", "unit-test-admin-password")
@@ -760,6 +797,23 @@ class PayoutServiceTests(unittest.TestCase):
             policy = store.risk_policy()
             self.assertEqual(policy["daily_withdrawal_limit"], "10.000000")
             self.assertEqual(policy["daily_withdrawn_amount"], "6.000000")
+
+    def test_low_network_fee_reserve_blocks_approval_before_signing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = M2WalletStore(Path(folder) / "fee-reserve.db")
+            withdrawal, _ = store.create_withdrawal(
+                {"merchant_withdraw_id": "FEE-RESERVE-1", "amount": "12", "currency": "USDT", "network": "TRON", "to_address": TRON_ADDRESS}
+            )
+            store.update_network_reserve(
+                {"network": "TRON", "available": "60", "minimum_required": "50", "estimated_per_transaction": "15"},
+                "admin",
+            )
+            with self.assertRaisesRegex(RuntimeError, "cannot fund another transaction"):
+                PayoutService(store).approve_and_send(withdrawal["id"], "finance")
+            self.assertEqual(store.get_withdrawal(withdrawal["id"])["status"], "PENDING_APPROVAL")
+            store.update_network_reserve({"network": "TRON", "available": "80"}, "admin")
+            confirmed = PayoutService(store).approve_and_send(withdrawal["id"], "finance")
+            self.assertEqual(confirmed["status"], "CONFIRMED")
 
     def test_external_withdrawal_verification_controls_signing(self) -> None:
         class RejectVerifier:

@@ -111,7 +111,15 @@ python3 -m backend.server
 2. 页面实时读取数据库和账本，检查八个交付领域。
 3. 检查范围包括稳定币收付、异常订单、归集、财务出款、商户验证、签名回调、风控和对账。
 4. 点击 `Refresh evidence` 可重新计算，不依赖缓存或人工填写。
-5. `8 of 8 checks passed` 且对账为 Balanced 时，表示当前内部 Demo 数据满足演示验收条件。
+5. `9 of 9 checks passed` 且对账为 Balanced 时，表示当前内部 Demo 数据满足演示验收条件。
+
+### 场景七：手续费储备不足时阻止出款
+
+1. 使用管理员账号打开 `Risk Control → Automation`。
+2. 在“Network Fee Reserves”中将 TRON 可用余额改为 `60 TRX`，最低保留 `50 TRX`，单笔预估 `15 TRX`。
+3. 打开一个 TRON-USDT 待审批提现，确认审批证据显示 `Blocked`，审批按钮变为 `Insufficient fee reserve`。
+4. 返回储备页面，将可用余额恢复为 `250 TRX`。
+5. 再次打开该提现，确认预计可处理笔数恢复，财务可以继续审批、签名和广播。
 
 ## 验收结果
 

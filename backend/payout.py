@@ -199,6 +199,19 @@ class PayoutService:
             raise RuntimeError("M2_DAILY_WITHDRAWAL_LIMIT must be a positive number")
         if withdrawal["status"] == "PENDING_APPROVAL" and daily_total + amount > daily_limit:
             raise RuntimeError(f"withdrawal exceeds the configured daily payout limit ({daily_limit})")
+        reserve = next(
+            (item for item in self.store.network_reserves() if item["network"] == withdrawal["network"]),
+            None,
+        )
+        if not reserve:
+            raise RuntimeError(f"network fee reserve is not configured for {withdrawal['network']}")
+        if not reserve["healthy"]:
+            raise RuntimeError(
+                f"{withdrawal['network']} fee reserve cannot fund another transaction above the minimum "
+                f"({reserve['available']} {reserve['native_asset']} available; "
+                f"{reserve['minimum_required']} minimum; "
+                f"{reserve['estimated_per_transaction']} estimated per transaction)"
+            )
 
     @staticmethod
     def _default_signer() -> Signer:

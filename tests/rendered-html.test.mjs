@@ -31,12 +31,15 @@ test("redirects the hosted root to the M2 Wallet demo", async () => {
 });
 
 test("ships the installable English M2 Wallet PWA assets", async () => {
-  const [page, layout, manifestText, serviceWorker, indexHtml] = await Promise.all([
+  const [page, layout, manifestText, serviceWorker, indexHtml, demoScript, demoStore, demoStyles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/demo/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/demo/service-worker.js", import.meta.url), "utf8"),
     readFile(new URL("../public/demo/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/cregis.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/demo-store.js", import.meta.url), "utf8"),
+    readFile(new URL("../public/demo/wallet-detail.css", import.meta.url), "utf8"),
   ]);
   const manifest = JSON.parse(manifestText);
 
@@ -48,10 +51,20 @@ test("ships the installable English M2 Wallet PWA assets", async () => {
   assert.equal(manifest.display, "standalone");
   assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
-  assert.match(serviceWorker, /m2-wallet-demo-v3/);
+  assert.match(serviceWorker, /m2-wallet-demo-v6/);
   assert.match(indexHtml, /<html lang="en">/);
   assert.match(indexHtml, /operations\.css/);
   assert.match(indexHtml, /navigator\.serviceWorker\.register/);
+  assert.match(demoScript, /data-action="approve-withdrawal"/);
+  assert.match(demoScript, /dataset\.action==='approve-withdrawal'/);
+  assert.match(demoScript, /\/api\/v1\/network-reserves/);
+  assert.match(demoScript, /network-reserve-card/);
+  assert.match(demoScript, /fee reserve check blocked/);
+  assert.match(demoStore, /projected_transactions/);
+  assert.match(demoStore, /administrator role required/);
+  assert.match(demoStyles, /\.approval-evidence\.blocked/);
+  assert.match(demoStyles, /\.network-reserve-grid/);
+  assert.doesNotMatch(demoScript, /data-approve=/);
 
   await Promise.all([
     access(new URL("../public/demo/icon-192.png", import.meta.url)),

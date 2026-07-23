@@ -271,6 +271,7 @@ class M2WalletHandler(BaseHTTPRequestHandler):
                     "/api/v1/ip-allowlist": self.store.list_ip_allowlist,
                     "/api/v1/demo-merchant/webhooks": self.store.demo_webhook_receipts,
                     "/api/v1/demo-readiness": self.store.demo_readiness,
+                    "/api/v1/network-reserves": self.store.network_reserves,
                 }
                 if path not in routes:
                     raise ApiError(HTTPStatus.NOT_FOUND, "API route not found")
@@ -348,6 +349,18 @@ class M2WalletHandler(BaseHTTPRequestHandler):
                 policy = self.store.update_risk_policy(payload, principal.username)
                 self._audit(principal, "UPDATE", "RISK_POLICY", "payout", detail=json.dumps(policy, ensure_ascii=False))
                 self._json(HTTPStatus.OK, {"data": policy})
+                return
+            if path == "/api/v1/network-reserves":
+                principal = self._require_roles("ADMIN")
+                reserve = self.store.update_network_reserve(payload, principal.username)
+                self._audit(
+                    principal,
+                    "UPDATE",
+                    "NETWORK_RESERVE",
+                    reserve["network"],
+                    detail=json.dumps(reserve, ensure_ascii=False),
+                )
+                self._json(HTTPStatus.OK, {"data": reserve})
                 return
             if path == "/api/v1/collection-policy":
                 principal = self._require_roles("ADMIN")
