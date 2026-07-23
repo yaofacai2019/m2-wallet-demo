@@ -16,15 +16,12 @@ python3 -m backend.server
 
 ## 演示账号
 
-浏览器沙箱可选择下列角色，并输入任意非空沙箱密码。若运行 Python 后端，
-请先通过 `.env.example` 所列环境变量配置各角色密码。
-
 | 角色 | 账号 | 密码 | 主要用途 |
 | --- | --- | --- | --- |
-| 管理员 | `admin` | 环境变量配置 | 查看全部功能、审批、风控和审计 |
-| 运营 | `operator` | 环境变量配置 | 创建支付订单和提现申请 |
-| 财务 | `finance` | 环境变量配置 | 审批或拒绝提现 |
-| 只读 | `viewer` | 环境变量配置 | 只查看数据，不能创建或审批 |
+| 管理员 | `admin` | 通过 `M2_ADMIN_PASSWORD` 配置 | 查看全部功能、审批、风控和审计 |
+| 运营 | `operator` | 通过 `M2_OPERATOR_PASSWORD` 配置 | 创建支付订单和提现申请 |
+| 财务 | `finance` | 通过 `M2_FINANCE_PASSWORD` 配置 | 审批或拒绝提现 |
+| 只读 | `viewer` | 通过 `M2_VIEWER_PASSWORD` 配置 | 只查看数据，不能创建或审批 |
 
 ## 路径一：客户使用稳定币支付
 
@@ -129,9 +126,18 @@ python3 -m backend.server
 4. 在 `Network Fee Activity` 查看业务单号、网络、费用、操作人和 `CONSUMED` 状态。
 5. 若签名服务失败，系统会将预留费用自动退回，并把流水标记为 `RELEASED`，不会造成重复扣费。
 
+### 场景九：商户稳定币佣金配置
+
+1. 使用管理员账号打开 `Payment Engine → Settings → Payment currencies and settlement`。
+2. 在 `Platform commission rules` 查看 USDT、USDC 平台默认费率，并为指定 Merchant 添加专属费率。
+3. 创建一笔该 Merchant 的新支付订单，打开详情确认佣金金额和百分比使用专属规则。
+4. 修改该 Merchant 的费率，再创建第二笔订单；新订单使用新费率，第一笔订单仍保留创建时费率。
+5. 模拟订单到账，确认实付佣金、结算总手续费和净结算金额使用各订单锁定费率。
+6. 打开 `Management → Audit logs`，确认费率新增或修改已记录为 `PAYMENT_FEE_RULE`。
+
 ## 验收结果
 
-- 后端自动测试：34 项通过。
+- 后端自动测试：36 项通过。
 - 页面回归：44 个主页面和子页面通过，0 个失败。
 - 英文界面回归：主页面、子页面、关键抽屉及弹窗可见中文扫描 0 个残留。
 - 对账结果：复式账本平衡，0 个失败提现，0 个失败回调。

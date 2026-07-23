@@ -12,6 +12,7 @@ import hmac
 import mimetypes
 import os
 import re
+import secrets
 import time
 from decimal import Decimal
 from http import HTTPStatus
@@ -221,6 +222,9 @@ class M2WalletHandler(BaseHTTPRequestHandler):
                 if path == "/api/v1/project-settings":
                     self._json(HTTPStatus.OK, {"data": self.store.project_settings()})
                     return
+                if path == "/api/v1/payment-fee-rules":
+                    self._json(HTTPStatus.OK, {"data": self.store.list_payment_fee_rules()})
+                    return
                 payment_callbacks_match = re.fullmatch(r"/api/v1/payment-orders/([^/]+)/callbacks", path)
                 if payment_callbacks_match:
                     record = self.store.get_payment_by_reference(payment_callbacks_match.group(1))
@@ -374,6 +378,18 @@ class M2WalletHandler(BaseHTTPRequestHandler):
                 self._audit(principal, "UPDATE", "PROJECT_SETTINGS", "M2-PAY", detail=json.dumps(settings, ensure_ascii=False))
                 self._json(HTTPStatus.OK, {"data": settings})
                 return
+            if path == "/api/v1/payment-fee-rules":
+                principal = self._require_roles("ADMIN")
+                rule = self.store.upsert_payment_fee_rule(payload, principal.username)
+                self._audit(
+                    principal,
+                    "UPSERT",
+                    "PAYMENT_FEE_RULE",
+                    rule["id"],
+                    detail=json.dumps(rule, ensure_ascii=False),
+                )
+                self._json(HTTPStatus.OK, {"data": rule})
+                return
             if path == "/api/v1/api-keys":
                 principal = self._require_roles("ADMIN")
                 record = self.store.create_api_key(payload, principal.username)
@@ -521,7 +537,7 @@ def main() -> None:
         required = ["M2_WALLET_API_KEY", "M2_ADMIN_PASSWORD", "M2_FINANCE_PASSWORD", "M2_OPERATOR_PASSWORD", "M2_VIEWER_PASSWORD"]
         missing = [name for name in required if not os.environ.get(name)]
         if missing:
-            raise RuntimeError(f"configure credentials before listening beyond localhost: {', '.join(missing)}")
+            raise RuntimeError(f"set credentials before listening beyond localhost: {', '.join(missing)}")
     server = M2WalletServer((DEFAULT_HOST, DEFAULT_PORT))
     print(f"M2 Wallet demo: http://{DEFAULT_HOST}:{DEFAULT_PORT}")
     print(f"API key: {API_KEY} (change M2_WALLET_API_KEY outside local demo)")

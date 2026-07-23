@@ -51,7 +51,7 @@ test("ships the installable English M2 Wallet PWA assets", async () => {
   assert.equal(manifest.display, "standalone");
   assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
-  assert.match(serviceWorker, /m2-wallet-demo-v7/);
+  assert.match(serviceWorker, /m2-wallet-demo-v8/);
   assert.match(indexHtml, /<html lang="en">/);
   assert.match(indexHtml, /operations\.css/);
   assert.match(indexHtml, /navigator\.serviceWorker\.register/);
@@ -59,11 +59,15 @@ test("ships the installable English M2 Wallet PWA assets", async () => {
   assert.match(demoScript, /dataset\.action==='approve-withdrawal'/);
   assert.match(demoScript, /\/api\/v1\/network-reserves/);
   assert.match(demoScript, /\/api\/v1\/network-fee-events/);
+  assert.match(demoScript, /\/api\/v1\/payment-fee-rules/);
+  assert.match(demoScript, /Platform commission rate/);
   assert.match(demoScript, /network-reserve-card/);
   assert.match(demoScript, /fee-event-row/);
   assert.match(demoScript, /fee reserve check blocked/);
   assert.match(demoStore, /projected_transactions/);
   assert.match(demoStore, /consumeNetworkFee/);
+  assert.match(demoStore, /resolveFeeRate/);
+  assert.match(demoStore, /PAYMENT_FEE_RULE/);
   assert.match(demoStore, /administrator role required/);
   assert.match(demoStyles, /\.approval-evidence\.blocked/);
   assert.match(demoStyles, /\.network-reserve-grid/);

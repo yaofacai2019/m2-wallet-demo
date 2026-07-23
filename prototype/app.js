@@ -311,8 +311,7 @@ document.getElementById("paymentForm").addEventListener("submit", async event =>
         method: "POST",
         body: JSON.stringify({
           merchant_order_id: data.get("merchantOrderId"), merchant: data.get("merchant"), amount: String(data.get("amount")),
-          order_currency: data.get("orderCurrency"), pay_currency: data.get("payCurrency"), network: String(network).toUpperCase(),
-          fee_rate_bps: Math.round(feeRate * 100)
+          order_currency: data.get("orderCurrency"), pay_currency: data.get("payCurrency"), network: String(network).toUpperCase()
         })
       });
       await refreshApiState(); document.getElementById("paymentDialog").close(); switchView("payments");

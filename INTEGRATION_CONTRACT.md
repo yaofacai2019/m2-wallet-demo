@@ -5,7 +5,7 @@ Base URL: `http://127.0.0.1:8787/api/v1` for the local Demo.
 All merchant API requests use:
 
 ```http
-X-API-Key: <your-environment-api-key>
+X-API-Key: <your-configured-api-key>
 Content-Type: application/json
 ```
 
@@ -35,6 +35,13 @@ Supported pairs in the one-week Demo are `USDT/TRON` and `USDC/POLYGON`.
 `merchant_order_id` is the idempotency key. Repeating it returns the original order.
 Reusing the same value with a different amount, currency, or network returns a
 `400 idempotency conflict` response instead of silently changing the order.
+
+The platform resolves `fee_rate_bps` from admin-managed merchant and asset rules;
+merchant requests cannot set or override their own commission. The resolved rate
+is stored on the order at creation, so later rule changes affect only new orders.
+Admins manage rules through `GET|POST /payment-fee-rules`. Resolution priority is
+exact merchant + asset, merchant + `ALL`, platform default + asset, then platform
+default + `ALL`.
 
 Query an order by either the M2 Wallet ID or the merchant order ID:
 

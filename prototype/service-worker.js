@@ -1,4 +1,4 @@
-const CACHE="m2-wallet-demo-v7";
+const CACHE="m2-wallet-demo-v8";
 const ASSETS=["./index.html","./cregis.css","./wallet-detail.css","./session.css","./operations.css","./mobile.css","./demo-store.js","./cregis.js","./i18n-en.js","./manifest.webmanifest","./icon-192.png","./icon-512.png"];
 self.addEventListener("install",event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));

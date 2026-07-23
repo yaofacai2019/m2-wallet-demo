@@ -167,6 +167,19 @@ class M2WalletStore:
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_logs(created_at DESC);
+                CREATE TABLE IF NOT EXISTS payment_fee_rules (
+                    id TEXT PRIMARY KEY,
+                    merchant TEXT NOT NULL,
+                    asset TEXT NOT NULL CHECK(asset IN ('ALL','USDT','USDC')),
+                    fee_rate_bps INTEGER NOT NULL CHECK(fee_rate_bps BETWEEN 0 AND 1000),
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+                    updated_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(merchant, asset)
+                );
+                CREATE INDEX IF NOT EXISTS payment_fee_rules_priority_idx
+                    ON payment_fee_rules(asset, merchant, enabled);
                 CREATE TABLE IF NOT EXISTS runtime_settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
@@ -295,6 +308,15 @@ class M2WalletStore:
                     ("polygon_fee_available", os.environ.get("M2_POLYGON_FEE_AVAILABLE", "8"), "environment", now),
                     ("polygon_fee_minimum", os.environ.get("M2_POLYGON_FEE_MINIMUM", "1"), "environment", now),
                     ("polygon_fee_per_transaction", os.environ.get("M2_POLYGON_FEE_PER_TRANSACTION", "0.02"), "environment", now),
+                ],
+            )
+            db.executemany(
+                """INSERT OR IGNORE INTO payment_fee_rules
+                (id,merchant,asset,fee_rate_bps,enabled,updated_by,created_at,updated_at)
+                VALUES(?,?,?,?,1,'environment',?,?)""",
+                [
+                    ("FEE-RULE-DEFAULT-USDT", "*", "USDT", 50, now, now),
+                    ("FEE-RULE-DEFAULT-USDC", "*", "USDC", 50, now, now),
                 ],
             )
             environment_key = os.environ.get("M2_WALLET_API_KEY") or secrets.token_urlsafe(32)
@@ -475,6 +497,70 @@ class M2WalletStore:
                 ).fetchone()
             )
 
+    def list_payment_fee_rules(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT * FROM payment_fee_rules
+                ORDER BY CASE WHEN merchant='*' THEN 1 ELSE 0 END, merchant, asset"""
+            )
+            return [{**dict(row), "enabled": bool(row["enabled"])} for row in rows]
+
+    def resolve_payment_fee_rate(self, merchant: str, asset: str) -> int:
+        merchant = str(merchant or "Internal Merchant").strip() or "Internal Merchant"
+        asset = str(asset).upper()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT fee_rate_bps FROM payment_fee_rules
+                WHERE enabled=1 AND merchant IN (?, '*') AND asset IN (?, 'ALL')
+                ORDER BY
+                    CASE WHEN merchant=? THEN 0 ELSE 1 END,
+                    CASE WHEN asset=? THEN 0 ELSE 1 END
+                LIMIT 1""",
+                (merchant, asset, merchant, asset),
+            ).fetchone()
+        return int(row["fee_rate_bps"]) if row else 50
+
+    def upsert_payment_fee_rule(self, payload: dict[str, Any], actor: str) -> dict[str, Any]:
+        allowed = {"merchant", "asset", "fee_rate_bps", "enabled"}
+        if not payload or not set(payload).issubset(allowed):
+            raise ValueError("payment fee rule contains unsupported fields")
+        merchant = str(payload.get("merchant", "")).strip()
+        if not merchant or len(merchant) > 120:
+            raise ValueError("merchant must be between 1 and 120 characters")
+        asset = str(payload.get("asset", "")).upper()
+        if asset not in {"ALL", "USDT", "USDC"}:
+            raise ValueError("asset must be ALL, USDT, or USDC")
+        try:
+            fee_rate_bps = int(payload.get("fee_rate_bps"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("fee_rate_bps must be an integer") from exc
+        if not 0 <= fee_rate_bps <= 1000:
+            raise ValueError("fee_rate_bps must be between 0 and 1000")
+        enabled = payload.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be boolean")
+        now = utc_now()
+        with self._lock, self.connect() as db:
+            existing = db.execute(
+                "SELECT id,created_at FROM payment_fee_rules WHERE merchant=? AND asset=?",
+                (merchant, asset),
+            ).fetchone()
+            rule_id = existing["id"] if existing else self._id("FEE-RULE")
+            created_at = existing["created_at"] if existing else now
+            db.execute(
+                """INSERT INTO payment_fee_rules
+                (id,merchant,asset,fee_rate_bps,enabled,updated_by,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(merchant,asset) DO UPDATE SET
+                    fee_rate_bps=excluded.fee_rate_bps,
+                    enabled=excluded.enabled,
+                    updated_by=excluded.updated_by,
+                    updated_at=excluded.updated_at""",
+                (rule_id, merchant, asset, fee_rate_bps, int(enabled), actor, created_at, now),
+            )
+            row = db.execute("SELECT * FROM payment_fee_rules WHERE id=?", (rule_id,)).fetchone()
+        return {**dict(row), "enabled": bool(row["enabled"])}
+
     def create_payment(self, payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         if not self.project_settings()["enabled"]:
             raise ValueError("project is disabled")
@@ -486,9 +572,8 @@ class M2WalletStore:
         asset = str(payload["pay_currency"]).upper()
         self._validate_pair(network, asset)
         amount = parse_amount(payload["amount"])
-        fee_rate_bps = int(payload.get("fee_rate_bps", 50))
-        if not 0 <= fee_rate_bps <= 1000:
-            raise ValueError("fee_rate_bps must be between 0 and 1000")
+        merchant = str(payload.get("merchant", "Internal Merchant")).strip() or "Internal Merchant"
+        fee_rate_bps = self.resolve_payment_fee_rate(merchant, asset)
         fee = (amount * Decimal(fee_rate_bps) / Decimal(10000)).quantize(MONEY_QUANTUM)
         metadata = payload.get("metadata") or {}
         if not isinstance(metadata, dict):
@@ -528,7 +613,7 @@ class M2WalletStore:
                 (
                     payment_id,
                     str(payload["merchant_order_id"]),
-                    str(payload.get("merchant", "Internal Merchant")),
+                    merchant,
                     str(payload.get("customer_id") or "")[:120] or None,
                     money(amount),
                     str(payload["order_currency"]).upper(),

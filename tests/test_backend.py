@@ -64,6 +64,56 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(sum(Decimal(line["credit"]) for line in lines), Decimal("100"))
         self.assertEqual(len(self.store.callbacks()), 1)
 
+    def test_payment_fee_rules_are_server_controlled_and_immutable_per_order(self) -> None:
+        defaults = self.store.list_payment_fee_rules()
+        self.assertEqual({(item["merchant"], item["asset"]) for item in defaults}, {("*", "USDT"), ("*", "USDC")})
+        self.store.upsert_payment_fee_rule(
+            {"merchant": "Merchant Alpha", "asset": "USDT", "fee_rate_bps": 35, "enabled": True},
+            "admin",
+        )
+        first, _ = self.store.create_payment(
+            {
+                "merchant_order_id": "FEE-RULE-1",
+                "merchant": "Merchant Alpha",
+                "amount": "100",
+                "order_currency": "USD",
+                "pay_currency": "USDT",
+                "network": "TRON",
+                "fee_rate_bps": 0,
+            }
+        )
+        self.assertEqual(first["fee_rate_bps"], 35)
+        self.assertEqual(first["fee_amount"], "0.350000")
+        self.store.upsert_payment_fee_rule(
+            {"merchant": "Merchant Alpha", "asset": "USDT", "fee_rate_bps": 80, "enabled": True},
+            "admin",
+        )
+        confirmed = self.store.confirm_payment(first["id"])
+        self.assertEqual(confirmed["fee_rate_bps"], 35)
+        self.assertEqual(confirmed["fee_amount"], "0.350000")
+        second, _ = self.store.create_payment(
+            {
+                "merchant_order_id": "FEE-RULE-2",
+                "merchant": "Merchant Alpha",
+                "amount": "100",
+                "order_currency": "USD",
+                "pay_currency": "USDT",
+                "network": "TRON",
+            }
+        )
+        self.assertEqual(second["fee_rate_bps"], 80)
+        usdc, _ = self.store.create_payment(
+            {
+                "merchant_order_id": "FEE-RULE-USDC",
+                "merchant": "Merchant Alpha",
+                "amount": "100",
+                "order_currency": "USD",
+                "pay_currency": "USDC",
+                "network": "POLYGON",
+            }
+        )
+        self.assertEqual(usdc["fee_rate_bps"], 50)
+
     def test_withdrawal_approval_is_idempotent_and_balanced(self) -> None:
         payload = {
             "merchant_withdraw_id": "W-1001",
@@ -657,6 +707,51 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(disabled["data"]["status"], "DISABLED")
+
+    def test_admin_manages_payment_fee_rules_and_changes_are_audited(self) -> None:
+        _, viewer_cookie = self.login("viewer", "unit-test-viewer-password")
+        status, rules = self.request("/api/v1/payment-fee-rules", authorized=False, cookie=viewer_cookie)
+        self.assertEqual(status, 200)
+        self.assertTrue(any(item["merchant"] == "*" and item["asset"] == "USDT" for item in rules["data"]))
+        with self.assertRaises(HTTPError) as forbidden:
+            self.request(
+                "/api/v1/payment-fee-rules",
+                "POST",
+                {"merchant": "API Merchant", "asset": "USDT", "fee_rate_bps": 42, "enabled": True},
+                authorized=False,
+                cookie=viewer_cookie,
+            )
+        self.assertEqual(forbidden.exception.code, 403)
+        _, admin_cookie = self.login("admin", "unit-test-admin-password")
+        status, saved = self.request(
+            "/api/v1/payment-fee-rules",
+            "POST",
+            {"merchant": "API Merchant", "asset": "USDT", "fee_rate_bps": 42, "enabled": True},
+            authorized=False,
+            cookie=admin_cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["data"]["fee_rate_bps"], 42)
+        _, created = self.request(
+            "/api/v1/payment-orders",
+            "POST",
+            {
+                "merchant_order_id": "API-FEE-RULE-ORDER",
+                "merchant": "API Merchant",
+                "amount": "100",
+                "order_currency": "USD",
+                "pay_currency": "USDT",
+                "network": "TRON",
+                "fee_rate_bps": 0,
+            },
+            authorized=False,
+            cookie=admin_cookie,
+        )
+        self.assertEqual(created["data"]["fee_rate_bps"], 42)
+        _, logs = self.request("/api/v1/audit-logs", authorized=False, cookie=admin_cookie)
+        self.assertTrue(
+            any(item["action"] == "UPSERT" and item["resource_type"] == "PAYMENT_FEE_RULE" for item in logs["data"])
+        )
 
 
 class _FixtureResponse:

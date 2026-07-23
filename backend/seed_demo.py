@@ -23,7 +23,6 @@ def main() -> None:
             "order_currency": "USD",
             "pay_currency": "USDT",
             "network": "TRON",
-            "fee_rate_bps": 50,
         }
     )
     store.confirm_payment(payment["id"])
