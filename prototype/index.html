@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="M2 Wallet digital asset wallet and payment operations platform" />
+  <meta name="theme-color" content="#0b1714" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="M2 Wallet" />
+  <title>M2 Wallet</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <link rel="stylesheet" href="cregis.css" />
+  <link rel="stylesheet" href="wallet-detail.css" />
+  <link rel="stylesheet" href="session.css" />
+  <link rel="stylesheet" href="operations.css" />
+  <link rel="stylesheet" href="mobile.css" />
+</head>
+<body>
+  <section class="login-screen" id="loginScreen">
+            <form class="login-box" id="loginForm" method="post" action="/api/v1/session">
+      <div class="login-logo">M2</div>
+      <h1>Sign in to M2 Wallet</h1>
+      <p>Internal digital asset wallet and payment operations platform</p>
+      <label>Username<input name="username" value="finance" autocomplete="username" required /></label>
+      <label>Password<input name="password" type="password" value="" placeholder="Any value in the browser sandbox" autocomplete="off" required /></label>
+      <button class="login-submit">Sign in</button>
+      <div class="login-help"><b>Public sandbox roles</b><span>finance · Finance approval</span><span>operator · Operations</span><span>viewer · Read only</span><span>admin · Administrator</span></div>
+      <div class="login-error" id="loginError"></div>
+    </form>
+  </section>
+  <div id="app" class="shell hidden">
+    <aside class="rail">
+      <div class="m2-logo">M2</div>
+      <nav id="primaryNav" aria-label="Primary navigation"></nav>
+      <div class="rail-bottom"><button title="Notifications">♢<i></i></button><button title="Help">?</button><button title="Security">▢</button><button class="avatar" id="accountButton" data-module="settings" title="Account settings">M</button></div>
+    </aside>
+    <aside class="subnav" id="subnav"></aside>
+    <main class="workspace" id="workspace"></main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <dialog id="actionDialog"><div id="dialogBody"></div></dialog>
+  <script src="demo-store.js"></script>
+  <script src="cregis.js"></script>
+  <script src="i18n-en.js"></script>
+  <script>if('serviceWorker' in navigator)navigator.serviceWorker.register('./service-worker.js').catch(()=>{});</script>
+</body>
+</html>

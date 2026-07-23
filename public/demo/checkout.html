@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>M2 Wallet Pay</title>
+  <style>
+    :root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#151719;background:#f5f7f6}
+    *{box-sizing:border-box}body{min-height:100vh;margin:0;display:grid;place-items:center;padding:28px}
+    .card{width:min(470px,100%);padding:28px;border:1px solid #e6e9e7;border-radius:16px;background:#fff;box-shadow:0 18px 55px rgba(28,42,35,.08);text-align:center}
+    header{display:flex;align-items:center;justify-content:space-between;text-align:left}.brand{font-weight:800}.merchant{display:block;margin-top:3px;color:#757b78;font-size:12px}
+    .status{padding:5px 9px;border-radius:12px;color:#9a6700;background:#fff4d8;font-size:11px}.status.done{color:#14723a;background:#e8f8ee}
+    .label{margin:30px 0 6px;color:#858a87;font-size:12px}.amount{margin:0;font-size:36px}.network{display:inline-block;margin:12px 0 18px;padding:5px 10px;border-radius:12px;color:#14723a;background:#e8f8ee;font-size:10px}
+    .qr{display:grid;grid-template-columns:repeat(9,10px);grid-template-rows:repeat(9,10px);gap:2px;width:max-content;margin:4px auto 10px;padding:14px;border:1px solid #e4e7e5;border-radius:9px}.qr i{width:10px;height:10px;background:#fff}.qr i.on{border-radius:1px;background:#111}
+    .demo{color:#a0a5a2;font-size:9px}.address{display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;margin-top:22px;padding:11px;border-radius:9px;background:#f5f7f6;text-align:left}.address code{overflow:hidden;text-overflow:ellipsis;font-size:10px}.address button{padding:7px 12px;border:1px solid #dce1de;border-radius:7px;background:#fff;cursor:pointer}
+    .notice{margin:15px 0 0;color:#6f7572;font-size:10px;line-height:1.7}.order{margin-top:20px;padding-top:16px;border-top:1px solid #eef0ef;color:#959a97;font-size:9px}.error{color:#c33}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <header><div><span class="brand">M2 Wallet Pay</span><span class="merchant" id="merchant">Loading order…</span></div><span class="status" id="status">Loading</span></header>
+    <section id="content" class="hidden">
+      <p class="label">Amount due</p><h1 class="amount"><span id="amount"></span> <span id="currency"></span></h1>
+      <span class="network" id="network"></span>
+      <div class="qr" id="qr" aria-label="Demo payment QR code"></div><div class="demo">Demo QR code · The production version will generate a scannable on-chain URI</div>
+      <div class="address"><code id="address"></code><button id="copy">Copy</button></div>
+      <p class="notice" id="notice"></p><div class="order">Order ID: <span id="order"></span></div>
+    </section>
+    <p class="error hidden" id="error">This order does not exist or has expired.</p>
+  </main>
+  <script>
+    const id=decodeURIComponent(location.pathname.split('/').filter(Boolean).pop()||'');
+    const $=name=>document.getElementById(name);
+    function renderQr(seed){$('qr').innerHTML=Array.from({length:81},(_,i)=>`<i class="${((i*17+seed.charCodeAt(i%seed.length))%5)<2?'on':''}"></i>`).join('');}
+    async function load(){try{const response=await fetch(`/api/v1/public/payment-orders/${encodeURIComponent(id)}`,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error();const p=payload.data,labels={PENDING:'Awaiting payment',PARTIAL:'Underpaid',CONFIRMED:'Paid',OVERPAID:'Overpaid',EXPIRED:'Expired'},done=['CONFIRMED','OVERPAID'].includes(p.status);$('merchant').textContent=p.merchant;$('status').textContent=labels[p.status]||p.status;$('status').className=`status${done?' done':''}`;$('amount').textContent=Number(p.amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:6});$('currency').textContent=p.pay_currency;$('network').textContent=`${p.network} network`;$('address').textContent=p.pay_address;$('order').textContent=p.merchant_order_id;$('notice').textContent=p.status==='PARTIAL'?`Received ${Number(p.paid_amount).toLocaleString('en-US')} ${p.pay_currency}. Please send the remaining amount using the ${p.network} network.`:p.status==='EXPIRED'?'This payment order has expired. Do not send funds to this address.':`Send ${p.pay_currency} to this address only and make sure you use the ${p.network} network.`;renderQr(p.id);$('content').classList.remove('hidden');$('error').classList.add('hidden');}catch(error){$('content').classList.add('hidden');$('status').textContent='Unavailable';$('error').classList.remove('hidden');}}
+    $('copy').addEventListener('click',async()=>{await navigator.clipboard.writeText($('address').textContent);$('copy').textContent='Copied';setTimeout(()=>$('copy').textContent='Copy',1200)});
+    load();setInterval(load,3000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+@media (max-width: 760px) {
+  html, body { min-width: 0; overflow-x: hidden; }
+  .shell { display: block; height: auto; min-height: 100vh; padding-top: 116px; overflow: visible; }
+  .rail { position: fixed; z-index: 120; left: 0; right: 0; top: 0; width: 100%; height: 62px; flex-direction: row; padding: 6px 8px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .m2-logo { flex: 0 0 42px; margin: 0 7px 0 0; }
+  .rail nav { flex-direction: row; width: auto; gap: 2px; }
+  .rail-item { flex: 0 0 65px; padding: 4px 2px; font-size: 8px; }
+  .rail-item span { font-size: 16px; }
+  .rail-item.active span { width: 29px; height: 25px; }
+  .rail-bottom { display: none; }
+  .subnav { position: fixed; z-index: 110; left: 0; right: 0; top: 62px; display: flex; align-items: center; width: 100%; height: 54px; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; white-space: nowrap; }
+  .sub-head { flex: 0 0 auto; height: 54px; padding: 0 13px; font-size: 13px; }
+  .sub-section-title { display: none; }
+  .sub-item { flex: 0 0 auto; width: auto; margin: 3px; padding: 9px 11px; }
+  .wallet-list { display: flex; padding: 0; }
+  .wallet-row { min-width: 165px; padding: 7px 10px; }
+  .wallet-row small, .wallet-row b { display: none; }
+  .workspace { height: auto; min-height: calc(100vh - 116px); overflow: visible; }
+  .page { padding: 18px 13px 55px; }
+  .asset-total strong { font-size: 29px; }
+  .asset-row { grid-template-columns: 38px 1fr auto; }
+  .chain-detail { grid-template-columns: 1fr 1fr; }
+  .toolbar { align-items: flex-start; gap: 10px; }
+  .filter-bar, .payment-filter { overflow-x: auto; }
+  .data-table { min-width: 760px; }
+  .page:has(.data-table) { overflow-x: auto; }
+  .card-grid, .acceptance-grid, .api-key-summary { grid-template-columns: 1fr; }
+  .hero { padding: 25px 18px; }
+  .hero h1 { font-size: 27px; }
+  .wallet-drawer, .role-drawer, .account-drawer { position: fixed; width: 100%; max-width: none; }
+  .receipt-btn, .role-save { right: 16px; width: calc(100% - 32px); }
+  .flow-list, .send-form { width: 100%; }
+  .flow-body { max-width: 100%; }
+  .payment-simulation { grid-template-columns: 1fr; }
+  .acceptance-hero { align-items: flex-start; flex-direction: column; }
+  .acceptance-hero > strong { text-align: left; }
+}

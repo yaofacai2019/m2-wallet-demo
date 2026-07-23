@@ -1,0 +1,50 @@
+services:
+  m2-wallet:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      M2_WALLET_HOST: 0.0.0.0
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - m2-wallet-data:/app/data
+
+  tron-listener:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "backend.chain_listener", "--interval", "10"]
+    volumes:
+      - m2-wallet-data:/app/data
+    profiles: ["chain-workers"]
+
+  polygon-listener:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "backend.evm_listener", "--interval", "10"]
+    volumes:
+      - m2-wallet-data:/app/data
+    profiles: ["chain-workers"]
+
+  confirmation-worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "backend.confirmation_worker", "--interval", "10"]
+    volumes:
+      - m2-wallet-data:/app/data
+    profiles: ["chain-workers"]
+
+  callback-worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "-m", "backend.callback_worker", "--interval", "10"]
+    volumes:
+      - m2-wallet-data:/app/data
+    profiles: ["chain-workers"]
+
+volumes:
+  m2-wallet-data:
