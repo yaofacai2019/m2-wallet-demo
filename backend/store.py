@@ -173,6 +173,21 @@ class M2WalletStore:
                     updated_by TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS network_fee_events (
+                    id TEXT PRIMARY KEY,
+                    network TEXT NOT NULL,
+                    native_asset TEXT NOT NULL,
+                    reference_type TEXT NOT NULL,
+                    reference_id TEXT NOT NULL,
+                    amount TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('RESERVED','CONSUMED','RELEASED')),
+                    actor TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(reference_type, reference_id)
+                );
+                CREATE INDEX IF NOT EXISTS network_fee_events_created_idx
+                    ON network_fee_events(created_at DESC);
                 CREATE TABLE IF NOT EXISTS collection_tasks (
                     id TEXT PRIMARY KEY,
                     asset TEXT NOT NULL,
@@ -1227,6 +1242,125 @@ class M2WalletStore:
             )
         return next(item for item in self.network_reserves() if item["network"] == network)
 
+    def network_fee_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT * FROM network_fee_events ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (min(max(int(limit), 1), 500),),
+                )
+            ]
+
+    def reserve_network_fee(
+        self,
+        network: str,
+        reference_type: str,
+        reference_id: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        network = network.upper()
+        if network not in {"TRON", "POLYGON"}:
+            raise ValueError("network must be TRON or POLYGON")
+        reference_type = reference_type.upper()
+        if reference_type not in {"WITHDRAWAL", "COLLECTION"} or not reference_id:
+            raise ValueError("network fee reference is invalid")
+        prefix = network.lower()
+        now = utc_now()
+        with self._lock, self.connect() as db:
+            existing = db.execute(
+                "SELECT * FROM network_fee_events WHERE reference_type=? AND reference_id=?",
+                (reference_type, reference_id),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            settings = {
+                row["key"]: row["value"]
+                for row in db.execute(
+                    "SELECT key,value FROM runtime_settings WHERE key IN (?,?,?)",
+                    (
+                        f"{prefix}_fee_available",
+                        f"{prefix}_fee_minimum",
+                        f"{prefix}_fee_per_transaction",
+                    ),
+                )
+            }
+            available = Decimal(settings[f"{prefix}_fee_available"])
+            minimum = Decimal(settings[f"{prefix}_fee_minimum"])
+            amount = Decimal(settings[f"{prefix}_fee_per_transaction"])
+            remaining = (available - amount).quantize(MONEY_QUANTUM, rounding=ROUND_DOWN)
+            if remaining < minimum:
+                native_asset = "TRX" if network == "TRON" else "POL"
+                raise RuntimeError(
+                    f"{network} fee reserve cannot fund another transaction above the minimum "
+                    f"({money(available)} {native_asset} available; {money(minimum)} minimum; "
+                    f"{money(amount)} estimated per transaction)"
+                )
+            event_id = self._id("FEE")
+            native_asset = "TRX" if network == "TRON" else "POL"
+            db.execute(
+                "UPDATE runtime_settings SET value=?,updated_by=?,updated_at=? WHERE key=?",
+                (money(remaining), actor, now, f"{prefix}_fee_available"),
+            )
+            db.execute(
+                """INSERT INTO network_fee_events
+                (id,network,native_asset,reference_type,reference_id,amount,status,actor,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,'RESERVED',?,?,?)""",
+                (event_id, network, native_asset, reference_type, reference_id, money(amount), actor, now, now),
+            )
+            row = db.execute("SELECT * FROM network_fee_events WHERE id=?", (event_id,)).fetchone()
+            return dict(row)
+
+    def consume_network_fee(self, reference_type: str, reference_id: str) -> dict[str, Any]:
+        with self._lock, self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM network_fee_events WHERE reference_type=? AND reference_id=?",
+                (reference_type.upper(), reference_id),
+            ).fetchone()
+            if not row:
+                raise KeyError("network fee reservation not found")
+            if row["status"] == "CONSUMED":
+                return dict(row)
+            if row["status"] != "RESERVED":
+                raise ValueError("released network fee cannot be consumed")
+            now = utc_now()
+            db.execute(
+                "UPDATE network_fee_events SET status='CONSUMED',updated_at=? WHERE id=?",
+                (now, row["id"]),
+            )
+            updated = db.execute("SELECT * FROM network_fee_events WHERE id=?", (row["id"],)).fetchone()
+            return dict(updated)
+
+    def release_network_fee(self, reference_type: str, reference_id: str) -> dict[str, Any] | None:
+        with self._lock, self.connect() as db:
+            row = db.execute(
+                "SELECT * FROM network_fee_events WHERE reference_type=? AND reference_id=?",
+                (reference_type.upper(), reference_id),
+            ).fetchone()
+            if not row:
+                return None
+            if row["status"] == "RELEASED":
+                return dict(row)
+            if row["status"] == "CONSUMED":
+                return dict(row)
+            prefix = row["network"].lower()
+            setting = db.execute(
+                "SELECT value FROM runtime_settings WHERE key=?",
+                (f"{prefix}_fee_available",),
+            ).fetchone()
+            available = Decimal(setting["value"]) + Decimal(row["amount"])
+            now = utc_now()
+            db.execute(
+                "UPDATE runtime_settings SET value=?,updated_by=?,updated_at=? WHERE key=?",
+                (money(available.quantize(MONEY_QUANTUM)), f"release:{reference_id}", now, f"{prefix}_fee_available"),
+            )
+            db.execute(
+                "UPDATE network_fee_events SET status='RELEASED',updated_at=? WHERE id=?",
+                (now, row["id"]),
+            )
+            updated = db.execute("SELECT * FROM network_fee_events WHERE id=?", (row["id"],)).fetchone()
+            return dict(updated)
+
     def collection_policy(self) -> dict[str, Any]:
         with self.connect() as db:
             values = {row["key"]: row["value"] for row in db.execute("SELECT key,value FROM runtime_settings")}
@@ -1347,34 +1481,68 @@ class M2WalletStore:
         return self.get_collection(task_id) or {}
 
     def confirm_collection(self, task_id: str) -> dict[str, Any]:
-        with self._lock, self.connect() as db:
-            row = db.execute("SELECT * FROM collection_tasks WHERE id=?", (task_id,)).fetchone()
-            if not row:
-                raise KeyError("collection task not found")
-            if row["status"] == "CONFIRMED":
-                return dict(row)
-            if row["status"] != "PENDING":
-                raise ValueError("collection cannot be confirmed from current status")
-            now, journal = utc_now(), self._id("JRN")
-            tx_hash = self._tx_hash(row["network"], task_id)
-            db.execute(
-                "UPDATE collection_tasks SET status='CONFIRMED',tx_hash=?,updated_at=? WHERE id=?",
-                (tx_hash, now, task_id),
-            )
-            db.executemany(
-                """INSERT INTO ledger_lines
-                (journal_id,reference_type,reference_id,account,asset,debit,credit,created_at)
-                VALUES(?,?,?,?,?,?,?,?)""",
-                [
-                    (journal, "COLLECTION", task_id, "HOT_WALLET", row["asset"], row["amount"], "0", now),
-                    (journal, "COLLECTION", task_id, "COLLECTION_ADDRESSES", row["asset"], "0", row["amount"], now),
-                ],
-            )
+        task = self.get_collection(task_id)
+        if not task:
+            raise KeyError("collection task not found")
+        if task["status"] == "CONFIRMED":
+            return task
+        if task["status"] != "PENDING":
+            raise ValueError("collection cannot be confirmed from current status")
+        self.reserve_network_fee(task["network"], "COLLECTION", task_id, task["triggered_by"])
+        try:
+            with self._lock, self.connect() as db:
+                row = db.execute("SELECT * FROM collection_tasks WHERE id=?", (task_id,)).fetchone()
+                if not row:
+                    raise KeyError("collection task not found")
+                if row["status"] == "CONFIRMED":
+                    return dict(row)
+                if row["status"] != "PENDING":
+                    raise ValueError("collection cannot be confirmed from current status")
+                now, journal = utc_now(), self._id("JRN")
+                tx_hash = self._tx_hash(row["network"], task_id)
+                db.execute(
+                    "UPDATE collection_tasks SET status='CONFIRMED',tx_hash=?,updated_at=? WHERE id=?",
+                    (tx_hash, now, task_id),
+                )
+                db.executemany(
+                    """INSERT INTO ledger_lines
+                    (journal_id,reference_type,reference_id,account,asset,debit,credit,created_at)
+                    VALUES(?,?,?,?,?,?,?,?)""",
+                    [
+                        (journal, "COLLECTION", task_id, "HOT_WALLET", row["asset"], row["amount"], "0", now),
+                        (journal, "COLLECTION", task_id, "COLLECTION_ADDRESSES", row["asset"], "0", row["amount"], now),
+                    ],
+                )
+            self.consume_network_fee("COLLECTION", task_id)
+        except Exception:
+            self.release_network_fee("COLLECTION", task_id)
+            raise
         return self.get_collection(task_id) or {}
 
     def run_collection(self, network: str, asset: str, triggered_by: str) -> dict[str, Any]:
-        task = self.create_collection(network, asset, triggered_by)
-        return self.confirm_collection(task["id"])
+        normalized_network = network.upper()
+        reserve = next(
+            (item for item in self.network_reserves() if item["network"] == normalized_network),
+            None,
+        )
+        if not reserve:
+            raise RuntimeError(f"network fee reserve is not configured for {normalized_network}")
+        if not reserve["healthy"]:
+            raise RuntimeError(
+                f"{normalized_network} fee reserve cannot fund another transaction above the minimum"
+            )
+        task = self.create_collection(normalized_network, asset, triggered_by)
+        try:
+            return self.confirm_collection(task["id"])
+        except Exception:
+            with self._lock, self.connect() as db:
+                current = db.execute(
+                    "SELECT status FROM collection_tasks WHERE id=?", (task["id"],)
+                ).fetchone()
+                if current and current["status"] == "PENDING":
+                    db.execute("DELETE FROM collection_items WHERE task_id=?", (task["id"],))
+                    db.execute("DELETE FROM collection_tasks WHERE id=?", (task["id"],))
+            raise
 
     def pending_callbacks(self, limit: int = 50, max_attempts: int = 5) -> list[dict[str, Any]]:
         with self.connect() as db:

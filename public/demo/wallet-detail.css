@@ -282,4 +282,13 @@
 .reserve-stats small { display: block; margin-bottom: 4px; color: #8b918e; font-size: 8px; font-weight: 400; }
 .network-reserve-card footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
 .network-reserve-card footer small { color: #8b918e; font-size: 8px; }
+.fee-events-section { padding: 18px; border: 1px solid #e9eceb; border-radius: 10px; }
+.fee-event-list { border-top: 1px solid #ecefee; }
+.fee-event-row { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 10px; min-height: 62px; padding: 9px 4px; border-bottom: 1px solid #ecefee; }
+.fee-event-row > .network-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; color: #fff; background: #242a28; }
+.fee-event-row b, .fee-event-row small { display: block; }
+.fee-event-row small { margin-top: 4px; color: #858b88; font-size: 9px; }
+.fee-event-row > strong { min-width: 125px; text-align: right; font-size: 11px; }
+.fee-event-row .fee-state { color: #198947; font-size: 8px; text-transform: capitalize; }
+.fee-event-row .fee-state.released { color: #a66b13; }
 @media (max-width: 1150px) { .flow-list, .send-form { width: 440px; } .wallet-drawer { width: 390px; } .receipt-btn { width: 354px; } }

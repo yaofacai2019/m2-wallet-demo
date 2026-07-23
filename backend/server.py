@@ -12,7 +12,6 @@ import hmac
 import mimetypes
 import os
 import re
-import secrets
 import time
 from decimal import Decimal
 from http import HTTPStatus
@@ -272,6 +271,7 @@ class M2WalletHandler(BaseHTTPRequestHandler):
                     "/api/v1/demo-merchant/webhooks": self.store.demo_webhook_receipts,
                     "/api/v1/demo-readiness": self.store.demo_readiness,
                     "/api/v1/network-reserves": self.store.network_reserves,
+                    "/api/v1/network-fee-events": self.store.network_fee_events,
                 }
                 if path not in routes:
                     raise ApiError(HTTPStatus.NOT_FOUND, "API route not found")

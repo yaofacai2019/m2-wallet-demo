@@ -256,6 +256,8 @@ class PayoutService:
         withdrawal = self.store.approve_withdrawal(withdrawal_id, reviewed_by)
         if withdrawal["status"] == "CONFIRMED":
             return withdrawal
+        if withdrawal["status"] == "BROADCASTED":
+            return withdrawal
         intent = {
             "reference_id": withdrawal["id"],
             "network": withdrawal["network"],
@@ -263,13 +265,16 @@ class PayoutService:
             "amount": withdrawal["amount"],
             "to_address": withdrawal["to_address"],
         }
+        self.store.reserve_network_fee(withdrawal["network"], "WITHDRAWAL", withdrawal_id, reviewed_by)
         try:
             signed = self.signer.sign(intent)
             self.store.mark_withdrawal_signing(withdrawal_id, signed.signature_ref)
             tx_hash = self.broadcaster.broadcast(signed)
             broadcasted = self.store.mark_withdrawal_broadcasted(withdrawal_id, tx_hash)
+            self.store.consume_network_fee("WITHDRAWAL", withdrawal_id)
             return self.store.confirm_withdrawal(withdrawal_id) if self.auto_confirm else broadcasted
         except Exception as error:
+            self.store.release_network_fee("WITHDRAWAL", withdrawal_id)
             current = self.store.get_withdrawal(withdrawal_id)
             if current and current["status"] in ("APPROVED", "SIGNING", "BROADCASTED"):
                 self.store.fail_withdrawal(withdrawal_id, str(error))

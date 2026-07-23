@@ -221,8 +221,29 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(collection_lines), 2)
         self.assertEqual(sum(Decimal(line["debit"]) for line in collection_lines), Decimal("110"))
         self.assertEqual(sum(Decimal(line["credit"]) for line in collection_lines), Decimal("110"))
+        reserve = next(item for item in self.store.network_reserves() if item["network"] == "TRON")
+        self.assertEqual(reserve["available"], "235.000000")
+        fee_event = self.store.network_fee_events()[0]
+        self.assertEqual(fee_event["reference_type"], "COLLECTION")
+        self.assertEqual(fee_event["reference_id"], collected["id"])
+        self.assertEqual(fee_event["status"], "CONSUMED")
         with self.assertRaises(ValueError):
             self.store.run_collection("TRON", "USDT", "operator")
+
+    def test_low_network_fee_reserve_blocks_collection_without_claiming_addresses(self) -> None:
+        payment, _ = self.store.create_payment(
+            {"merchant_order_id": "COLLECT-FEE-BLOCK", "amount": "120", "order_currency": "USD", "pay_currency": "USDT", "network": "TRON"}
+        )
+        self.store.confirm_payment(payment["id"])
+        self.store.update_network_reserve(
+            {"network": "TRON", "available": "60", "minimum_required": "50", "estimated_per_transaction": "15"},
+            "admin",
+        )
+        with self.assertRaisesRegex(RuntimeError, "cannot fund another transaction"):
+            self.store.run_collection("TRON", "USDT", "operator")
+        self.assertEqual(self.store.list_collections(), [])
+        self.assertEqual(self.store.collection_candidates()[0]["amount"], "120.000000")
+        self.assertEqual(self.store.network_fee_events(), [])
 
     def test_address_book_persists_and_blocklist_stops_withdrawal(self) -> None:
         entry, created = self.store.create_address_book_entry(
@@ -563,6 +584,10 @@ class ApiTests(unittest.TestCase):
         status, reserves = self.request("/api/v1/network-reserves", authorized=False, cookie=finance_cookie)
         self.assertEqual(status, 200)
         self.assertEqual({item["network"] for item in reserves["data"]}, {"TRON", "POLYGON"})
+        status, fee_events = self.request("/api/v1/network-fee-events", authorized=False, cookie=finance_cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(fee_events["data"][0]["reference_id"], withdrawal_id)
+        self.assertEqual(fee_events["data"][0]["status"], "CONSUMED")
         with self.assertRaises(HTTPError) as reserve_forbidden:
             self.request(
                 "/api/v1/network-reserves",
@@ -814,6 +839,37 @@ class PayoutServiceTests(unittest.TestCase):
             store.update_network_reserve({"network": "TRON", "available": "80"}, "admin")
             confirmed = PayoutService(store).approve_and_send(withdrawal["id"], "finance")
             self.assertEqual(confirmed["status"], "CONFIRMED")
+            reserve = next(item for item in store.network_reserves() if item["network"] == "TRON")
+            self.assertEqual(reserve["available"], "65.000000")
+            self.assertEqual(reserve["projected_transactions"], 1)
+            event = store.network_fee_events()[0]
+            self.assertEqual(event["reference_type"], "WITHDRAWAL")
+            self.assertEqual(event["reference_id"], withdrawal["id"])
+            self.assertEqual(event["status"], "CONSUMED")
+            PayoutService(store).approve_and_send(withdrawal["id"], "finance")
+            self.assertEqual(len(store.network_fee_events()), 1)
+            self.assertEqual(
+                next(item for item in store.network_reserves() if item["network"] == "TRON")["available"],
+                "65.000000",
+            )
+
+    def test_failed_signing_releases_reserved_network_fee(self) -> None:
+        class FailingSigner:
+            def sign(self, _intent):
+                raise RuntimeError("signer unavailable")
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = M2WalletStore(Path(folder) / "fee-release.db")
+            withdrawal, _ = store.create_withdrawal(
+                {"merchant_withdraw_id": "FEE-RELEASE-1", "amount": "12", "currency": "USDT", "network": "TRON", "to_address": TRON_ADDRESS}
+            )
+            with self.assertRaisesRegex(RuntimeError, "signer unavailable"):
+                PayoutService(store, signer=FailingSigner()).approve_and_send(withdrawal["id"], "finance")
+            reserve = next(item for item in store.network_reserves() if item["network"] == "TRON")
+            self.assertEqual(reserve["available"], "250.000000")
+            event = store.network_fee_events()[0]
+            self.assertEqual(event["status"], "RELEASED")
+            self.assertEqual(store.get_withdrawal(withdrawal["id"])["status"], "FAILED")
 
     def test_external_withdrawal_verification_controls_signing(self) -> None:
         class RejectVerifier:

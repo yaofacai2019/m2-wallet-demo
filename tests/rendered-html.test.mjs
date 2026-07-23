@@ -51,19 +51,23 @@ test("ships the installable English M2 Wallet PWA assets", async () => {
   assert.equal(manifest.display, "standalone");
   assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
   assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512"));
-  assert.match(serviceWorker, /m2-wallet-demo-v6/);
+  assert.match(serviceWorker, /m2-wallet-demo-v7/);
   assert.match(indexHtml, /<html lang="en">/);
   assert.match(indexHtml, /operations\.css/);
   assert.match(indexHtml, /navigator\.serviceWorker\.register/);
   assert.match(demoScript, /data-action="approve-withdrawal"/);
   assert.match(demoScript, /dataset\.action==='approve-withdrawal'/);
   assert.match(demoScript, /\/api\/v1\/network-reserves/);
+  assert.match(demoScript, /\/api\/v1\/network-fee-events/);
   assert.match(demoScript, /network-reserve-card/);
+  assert.match(demoScript, /fee-event-row/);
   assert.match(demoScript, /fee reserve check blocked/);
   assert.match(demoStore, /projected_transactions/);
+  assert.match(demoStore, /consumeNetworkFee/);
   assert.match(demoStore, /administrator role required/);
   assert.match(demoStyles, /\.approval-evidence\.blocked/);
   assert.match(demoStyles, /\.network-reserve-grid/);
+  assert.match(demoStyles, /\.fee-event-list/);
   assert.doesNotMatch(demoScript, /data-approve=/);
 
   await Promise.all([
